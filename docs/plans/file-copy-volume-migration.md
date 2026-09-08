@@ -529,7 +529,6 @@ status:
   targetPVC: {name, uid}
   targetPV: {name, uid, volumeHandle}
   attempt: 2
-  bytesCopied: 0
   originalWorkloadState: []
   message: ""
 ```

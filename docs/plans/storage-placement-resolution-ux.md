@@ -30,7 +30,7 @@ Independent approvals on VolumeCopies would allow inconsistent decisions.
 | `storage.storageClassMappings` | One source class maps to one target class/failure domain | Cannot override placement for individual PVCs sharing a class |
 | `storage.mode: Manual` | Waits for source PVC annotation `migration.openshift.io/ready-to-migrate=true` and checks writers | Does not represent deferred scheduling edits or a customer resume handshake |
 | `VolumeCopy.spec.workloadGroup` | Associates copies with a group identifier | No independently stored group decision or execution coordinator |
-| `VolumeCopy.status.originalWorkloadState` | Holds replica counts and optional inverse patches | Not a customer-authored desired scheduling change |
+| `VolumeCopy.status.originalWorkloadState` | Holds replica counts for quiesce and resume | Not a customer-authored desired scheduling change |
 | `status.storage` | Aggregate copy counts and references | No complete preflight issue report or approved plan identity |
 
 Current file-copy preflight checks image, mappings and volume classification;
@@ -168,16 +168,16 @@ AwaitingPlacementUpdate, AwaitingResume, Validating, Succeeded, Failed.
 
 ## Customer journey
 
-| Step / console action | API interaction | Observable result |
-|---|---|---|
-| 1. Configure and Analyze | Set migration state Planning | Application continues using source; complete inventory/report appears |
-| 2. Open a blocking workload | GET its WorkloadMigration | PVCs, exact conflicting fields, desired target and authoritative owner shown |
-| 3. Save a resolution | Edit mapping/target override or group resolution | Preview updates; no application change is applied |
-| 4. Review | Read Ready group plans and migration plan ID | Exact patches, source/target volumes, quiesce owner and expected downtime steps shown |
-| 5. Start migration | Set Running and approvedPlanID together | Infrastructure preparation and target capacity creation begin |
-| 6. Observe preparation | Read group and VolumeCopy status | Target ownership/placement verified, optional precopy progresses |
-| 7. Cut over | VMO executes automatic steps; customer acts only at a declared manual checkpoint | All group volumes and scheduling changes switch while writers remain stopped |
-| 8. Validate and finish | Observe actual Pods/volume handles/readiness | Group succeeds; source cleanup remains subject to all groups and retention gates |
+| Step / console action       | API interaction                                                                  | Observable result                                                                     |
+|-----------------------------|----------------------------------------------------------------------------------|---------------------------------------------------------------------------------------|
+| 1. Configure and Analyze    | Set migration state Planning                                                     | Application continues using source; complete inventory/report appears                 |
+| 2. Open a blocking workload | GET its WorkloadMigration                                                        | PVCs, exact conflicting fields, desired target and authoritative owner shown          |
+| 3. Save a resolution        | Edit mapping/target override or group resolution                                 | Preview updates; no application change is applied                                     |
+| 4. Review                   | Read Ready group plans and migration plan ID                                     | Exact patches, source/target volumes, quiesce owner and expected downtime steps shown |
+| 5. Start migration          | Set Running and approvedPlanID together                                          | Infrastructure preparation and target capacity creation begin                         |
+| 6. Observe preparation      | Read group and VolumeCopy status                                                 | Target ownership/placement verified, optional precopy progresses                      |
+| 7. Cut over                 | VMO executes automatic steps; customer acts only at a declared manual checkpoint | All group volumes and scheduling changes switch while writers remain stopped          |
+| 8. Validate and finish      | Observe actual Pods/volume handles/readiness                                     | Group succeeds; source cleanup remains subject to all groups and retention gates      |
 
 Proposed CLI equivalents (resource short name `wkm` is also new):
 

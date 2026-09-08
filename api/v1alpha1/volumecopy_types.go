@@ -81,9 +81,6 @@ type WorkloadState struct {
 	Namespace  string `json:"namespace"`
 	Name       string `json:"name"`
 	Replicas   *int32 `json:"replicas,omitempty"`
-	// InversePatch is applied only during a safe metadata-only rollback.
-	// +optional
-	InversePatch []byte `json:"inversePatch,omitempty"`
 }
 
 // VolumeCopySpec defines one namespaced, resumable PVC copy.
@@ -111,15 +108,12 @@ type VolumeCopyStatus struct {
 	TargetPVC             *LocalObjectIdentity  `json:"targetPVC,omitempty"`
 	TargetPV              *VolumeObjectIdentity `json:"targetPV,omitempty"`
 	Attempt               int32                 `json:"attempt,omitempty"`
-	BytesCopied           int64                 `json:"bytesCopied,omitempty"`
-	FilesCopied           int64                 `json:"filesCopied,omitempty"`
 	TransferPod           string                `json:"transferPod,omitempty"`
 	TransferStartedAt     *metav1.Time          `json:"transferStartedAt,omitempty"`
 	TransferCompletedAt   *metav1.Time          `json:"transferCompletedAt,omitempty"`
 	EffectiveRsyncOptions []string              `json:"effectiveRsyncOptions,omitempty"`
 	OriginalWorkloadState []WorkloadState       `json:"originalWorkloadState,omitempty"`
 	Message               string                `json:"message,omitempty"`
-	Conditions            []metav1.Condition    `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:object:root=true
