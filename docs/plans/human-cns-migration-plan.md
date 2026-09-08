@@ -8,7 +8,8 @@ This document defines a first implementation of filesystem-mode vSphere CSI
 volume migration between vCenters in the same OpenShift cluster. VMO provisions
 new target volumes, copies their data, switches PVC bindings, and verifies
 storage placement. Customers remain responsible for stopping, resuming, and
-validating their applications at explicit checkpoints.
+validating their applications, and for applying and removing temporary
+namespace scheduling constraints at explicit checkpoints.
 
 The unit of coordination is a namespace. All vSphere-backed PVCs and their
 consumers in one namespace are prepared, quiesced, cut over, and validated
@@ -156,8 +157,13 @@ The site label has one purpose: distinguish source-vCenter Nodes from
 target-vCenter Nodes. It does not select a zone. Region and zone constraints
 remain separate.
 
-After storage cutover, VMO temporarily constrains newly created application
-Pods in the namespace with:
+During Planning, VMO records the Namespace UID, whether
+`openshift.io/node-selector` exists, and its original value in
+`StorageWorkloadMigration.status`. VMO does not modify the Namespace.
+
+After storage cutover, VMO publishes the required target-site selector in
+status and emits a supplemental Event asking the customer to add it to the
+Namespace:
 
 ```yaml
 metadata:
@@ -166,16 +172,16 @@ metadata:
       migration.openshift.io/site=<migration-uid>-target
 ```
 
-Before changing the Namespace, VMO stores a recovery record containing the
-Namespace UID, migration UID, whether the annotation originally existed, its
-original value, and the exact value VMO applied. Cleanup restores the original
-value only when those identities still match and the current selector still
-equals the VMO-applied value. A conflicting customer change blocks cleanup
-instead of being overwritten.
+If the Namespace already has a selector, the customer merges the target-site
+requirement with the existing value rather than replacing unrelated scheduling
+constraints. VMO observes the resulting annotation, records the applied value,
+and verifies that it includes the required target-site constraint and remains
+compatible with the migrated workloads.
 
-VMO must not apply this namespace selector before the authoritative final copy.
+VMO must not request this namespace change before the authoritative final copy.
 The final source reader runs in the workload namespace and must still schedule
-on a source-vCenter Node.
+on a source-vCenter Node. VMO does not publish `ReadyForResume` until it observes
+and validates the customer-applied selector.
 
 ## 5. Topology rules
 
@@ -281,7 +287,7 @@ schedulable target Nodes are available in every selected target failure domain.
 For each PVC, VMO:
 
 1. Resolves and persists the target StorageClass and target failure domain.
-2. Creates a temporary target PVC using the broad WFFC target StorageClass.
+2. Creates a temporary target PVC using the broad `WaitForFirstConsumer` target StorageClass.
 3. Creates a receiver Pod with the target site constraint and, for zonal
    clusters, the resolved target region and zone.
 4. Lets the receiver act as the first consumer that drives target volume
@@ -331,9 +337,11 @@ VMO then performs one namespace cutover:
    identities before deleting any PVC.
 6. Verify every original PVC name or consumer reference resolves to the
    expected target PV and target volume handle.
-7. Record the original Namespace selector and apply the temporary target-site
-   selector.
-8. Set `StorageWorkloadMigration.status.phase` to `ReadyForResume`.
+7. Set `StorageWorkloadMigration.status.phase` to
+   `AwaitingPlacementUpdate`, publish the required selector, and ask the
+   customer to add it to the Namespace.
+8. Observe and validate the customer-applied Namespace selector.
+9. Set `StorageWorkloadMigration.status.phase` to `ReadyForResume`.
 
 `DataCopied` is not a resume boundary. Resume is allowed only after data copy,
 PVC cutover, binding verification, transfer cleanup, and target placement are
@@ -365,22 +373,33 @@ continue `WorkloadMigrated` and retire source workers.
 
 ## 9. Placement cleanup
 
-Placement cleanup is separate from source-data deletion. VMO automatically
-releases the temporary placement fence after it verifies that:
+Placement cleanup is separate from source-data deletion. After VMO verifies
+that:
 
 - source worker MachineSets cannot recreate source workers;
 - no schedulable source-vCenter worker Nodes remain;
 - all namespace migrations are `Complete`; and
-- no active rollback requires source placement.
+- no active rollback requires source placement,
 
-VMO then:
+it sets each affected `StorageWorkloadMigration.status.phase` to
+`AwaitingPlacementCleanup`, publishes the recorded original selector, and emits
+a supplemental Event asking the customer to remove the migration site
+constraint. The customer may restore the recorded original value or apply a
+different final selector that is valid for the target cluster.
 
-1. Restores each Namespace's original `openshift.io/node-selector` value using
-   its recovery record.
-2. Recreates any Pending application Pods that still contain an injected stale
-   migration selector when necessary.
-3. Removes migration site labels from target MachineSet templates and Nodes.
-4. Records placement cleanup as complete.
+The customer then:
+
+1. Removes `migration.openshift.io/site=<migration-uid>-target` from each
+   Namespace's `openshift.io/node-selector` annotation.
+2. Restores the previous selector or installs the intended final target
+   selector.
+3. Deletes and recreates any Pending application Pods that still contain the
+   injected migration selector.
+
+VMO verifies that the migration selector is absent and that the resulting
+selector remains compatible with target placement. VMO then removes migration
+site labels from the MachineSet templates and Nodes and records placement
+cleanup as complete. VMO never writes the Namespace selector itself.
 
 Future target Nodes do not need migration labels after this point. Retained
 source volumes may remain for the rollback-retention period without keeping
