@@ -3,6 +3,7 @@
 # It should be run by config/default
 resources:
 - bases/migration.openshift.io_vmwarecloudfoundationmigrations.yaml
+- bases/migration.openshift.io_volumecopies.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 # JSON patch to require topology.template for each failure domain (avoids strategic merge

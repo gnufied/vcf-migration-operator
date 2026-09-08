@@ -8,8 +8,13 @@ rules:
   - ""
   resources:
   - configmaps
+  - events
+  - persistentvolumeclaims
+  - persistentvolumes
   - pods
   - secrets
+  - serviceaccounts
+  - services
   verbs:
   - create
   - delete
@@ -21,15 +26,7 @@ rules:
 - apiGroups:
   - ""
   resources:
-  - events
-  verbs:
-  - create
-  - patch
-- apiGroups:
-  - ""
-  resources:
   - nodes
-  - persistentvolumes
   verbs:
   - get
   - list
@@ -37,7 +34,10 @@ rules:
 - apiGroups:
   - apps
   resources:
+  - daemonsets
   - deployments
+  - replicasets
+  - statefulsets
   verbs:
   - get
   - list
@@ -49,6 +49,25 @@ rules:
   resources:
   - clusterautoscalers
   - machineautoscalers
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - batch
+  resources:
+  - cronjobs
+  - jobs
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - cns.vmware.com
+  resources:
+  - cnsvolumeinfoes
   verbs:
   - get
   - list
@@ -129,16 +148,42 @@ rules:
   - migration.openshift.io
   resources:
   - vmwarecloudfoundationmigrations/finalizers
+  - volumecopies/finalizers
   verbs:
   - update
 - apiGroups:
   - migration.openshift.io
   resources:
   - vmwarecloudfoundationmigrations/status
+  - volumecopies/status
   verbs:
   - get
   - patch
   - update
+- apiGroups:
+  - migration.openshift.io
+  resources:
+  - volumecopies
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - networking.k8s.io
+  resources:
+  - networkpolicies
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
 - apiGroups:
   - operator.openshift.io
   resources:
@@ -146,3 +191,26 @@ rules:
   - storages
   verbs:
   - get
+- apiGroups:
+  - rbac.authorization.k8s.io
+  resources:
+  - rolebindings
+  - roles
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - storage.k8s.io
+  resources:
+  - csidrivers
+  - storageclasses
+  - volumeattachments
+  verbs:
+  - get
+  - list
+  - watch

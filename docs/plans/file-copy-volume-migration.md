@@ -20,13 +20,13 @@ same-name rebind; the operator does not export and recreate a namespace.
 
 The initial strategy matrix is:
 
-| Volume | Default action |
-|---|---|
-| vSphere CSI, `volumeMode: Filesystem`, RWX/ROX | `FileCopyMover` |
-| vSphere CSI, `volumeMode: Filesystem`, RWO | `FileCopyMover`; online precopy only when a reader can share the workload's node |
-| vSphere CSI, `volumeMode: Filesystem`, RWOP | `FileCopyMover`, offline copy only |
-| vSphere CSI, `volumeMode: Block` | CNS relay or explicit manual handling; rsync is not applicable |
-| External NFS, CephFS, object storage, or other vCenter-independent storage | `NoMove` after target-node reachability validation |
+| Volume                                                                     | Default action                                                                   |
+|----------------------------------------------------------------------------|----------------------------------------------------------------------------------|
+| vSphere CSI, `volumeMode: Filesystem`, RWX/ROX                             | `FileCopyMover`                                                                  |
+| vSphere CSI, `volumeMode: Filesystem`, RWO                                 | `FileCopyMover`; online precopy only when a reader can share the workload's node |
+| vSphere CSI, `volumeMode: Filesystem`, RWOP                                | `FileCopyMover`, offline copy only                                               |
+| vSphere CSI, `volumeMode: Block`                                           | CNS relay or explicit manual handling; rsync is not applicable                   |
+| External NFS, CephFS, object storage, or other vCenter-independent storage | `NoMove` after target-node reachability validation                               |
 
 The staged CNS relay remains an optional identity-preserving backend for raw
 block volumes and workloads where recreating/rebinding a PVC is unacceptable.
@@ -48,6 +48,8 @@ datastore is not required when all selected volumes use `FileCopyMover`.
   rollback-retention period complete.
 - Provide a specialized OpenShift integrated image-registry cutover.
 
+
+	
 ### Non-goals for v1
 
 - Crash-consistent live migration without a final write quiesce.
@@ -722,3 +724,223 @@ Manual       application-native or unsupported case
 The common orchestration layer owns inventory, workload grouping, quiesce,
 target topology, status, validation and source-cleanup gates. Movers implement
 only backend-specific target preparation and data movement.
+
+## 18. Addendum: Transfer Transport and Admission-Enforced PVC Freeze
+
+Status: Proposed POC refinement (2026-09-02)
+
+This addendum refines two choices without otherwise changing the design above:
+
+1. stunnel remains the secure default, but users may explicitly select plain
+   rsync over the private ClusterIP path; and
+2. `Automatic` mode may opt into a `MutatingAdmissionPolicy` (MAP) that adds a
+   scheduling gate to newly created Pods that reference a workload group's
+   source PVCs during the quiesce and cutover window.
+
+Where this addendum conflicts with sections 7.2, 8.3, 10, 13, 14, 15 or 16,
+this addendum controls.
+
+### 18.1 Transfer transport selection
+
+Add an explicit transport choice:
+
+```yaml
+spec:
+  storage:
+    transfer:
+      # Stunnel is the default. Plain is an explicit opt-out from transport
+      # encryption when the deployment provides an acceptable trusted or
+      # encrypted pod network between sites.
+      transport: Stunnel             # Stunnel | Plain
+```
+
+`Stunnel` retains the behavior in section 7.2: a private ClusterIP Service,
+per-attempt TLS credentials, stunnel sidecars and a NetworkPolicy restricted to
+the transfer Pods. It is the default when `transport` is omitted.
+
+`Plain` sends the rsync stream directly between the source reader and
+destination receiver through the private ClusterIP Service. It omits stunnel
+containers and TLS credentials, but retains stable attempt identities,
+NetworkPolicy isolation, digest-pinned images and all source/destination
+placement checks. It does not create a Route, Ingress, LoadBalancer or
+NodePort.
+
+Selecting `Plain` is itself the user's explicit acknowledgement that VMO does
+not provide confidentiality or peer authentication for the data stream. A
+ClusterIP and NetworkPolicy limit reachability but are not substitutes for
+encryption; namespace users able to create suitably labeled Pods may also
+weaken label-based isolation. Preflight must emit a prominent warning and an
+Event when `Plain` is selected. VMO must not automatically downgrade from
+`Stunnel` after a TLS setup or transfer failure.
+
+The selected transport is copied into immutable `VolumeCopy.spec` and recorded
+as `status.effectiveTransport`. A retry of the same copy checkpoint uses the
+same transport. Changing transport requires stopping the current attempt,
+deleting its transport resources and starting a new attempt; it must never
+retarget a running rsync process in place.
+
+POC and e2e results must compare CPU consumption, throughput and final-delta
+duration for `Stunnel` and `Plain`. The secure default should only be revisited
+if measurements show a material migration impact and the supported network
+encryption assumptions can be stated precisely.
+
+### 18.2 Admission-enforced scheduling gate for automatic quiesce
+
+Scaling discovered controllers to zero remains necessary, but it does not by
+itself prevent a Job, CronJob, operator, user or racing controller from creating
+a new writer. For the POC, `Automatic` mode may opt into an admission guard:
+
+```yaml
+spec:
+  storage:
+    mode: Automatic
+    quiesce:
+      podSchedulingGuard: SchedulingGate  # None | SchedulingGate; default None
+```
+
+`SchedulingGate` instructs VMO to manage a MAP and binding that mutate each
+new Pod referencing any source PVC in the active workload group by adding:
+
+```yaml
+spec:
+  schedulingGates:
+    - name: migration.openshift.io/pvc-frozen
+```
+
+The gate applies to Pod `CREATE` requests. Existing Pods are unaffected and
+must still be terminated through the normal quiesce flow. Kubernetes permits a
+scheduling gate to be initialized at Pod creation and removed later, but does
+not permit adding one to an existing Pod. A Pod submitted with both this gate
+and an explicit `spec.nodeName` is rejected rather than bypassing the freeze.
+
+For the first iteration, VMO uses the in-process, declarative MAP API instead
+of deploying a webhook service. Preflight must verify that the MAP API and
+required feature gates are available in the OpenShift release. If they are not
+available, selecting `SchedulingGate` is a hard preflight failure; VMO does not
+silently fall back to `None`.
+
+VMO installs one reusable MAP and creates migration/workload-group-specific
+bindings or parameters containing the namespace and exact source PVC names.
+The resources are cluster-scoped where required, cannot be owned by a
+namespaced `VolumeCopy`, and therefore carry the migration UID and workload
+group labels and are removed through the explicit migration cleanup state
+machine. Policy matching must use namespace plus claim name and must not infer
+identity from a claim name alone.
+
+Transfer and probe Pods require a narrow exemption. The exemption must verify
+the VMO transfer ServiceAccount identity and the migration/`VolumeCopy` labels;
+a user-supplied label alone is not sufficient. The source transfer mount
+remains read-only. All other Pods that reference a frozen source claim receive
+the gate regardless of their owning controller.
+
+The ordered freeze protocol is:
+
+1. Persist the workload group, source PVC identities, original replica counts
+   and intended MAP resources in `VolumeCopy.status`.
+2. Create or update the MAP parameters/bindings for the exact source claims.
+3. Prove admission is active with a server-side dry-run Pod creation and verify
+   that the returned Pod contains the expected scheduling gate.
+4. Scale or suspend all discovered writers and wait for their Pods to
+   terminate. Any replacement Pod is admitted but remains scheduling-gated.
+5. Verify that no ungated writable Pod uses a source PVC and, for RWO/RWOP,
+   wait for workload VolumeAttachments to disappear.
+6. Run the final copy and keep the admission guard active continuously through
+   cutover and target-placement updates.
+7. Delete gated application Pods created during the freeze rather than merely
+   removing their gates. Their embedded claim references or scheduling policy
+   may describe the pre-cutover state. Resume the owning controllers only after
+   their templates, PVC binding and target placement are correct, allowing
+   them to create fresh Pods.
+8. Remove the workload-group binding/parameters after the fresh target Pods
+   are admitted and validated. Remove the shared MAP only when no migration
+   still uses it.
+
+MAP activation is a safety boundary. VMO must not scale down the last known
+writer until the dry-run activation probe succeeds. Similarly, it must not
+remove the guard merely because the final rsync completed; the no-writer window
+extends through successful cutover. On pause or final-copy failure, the guard
+remains active while the workload remains quiesced. A rollback or
+`resumeOnFailure` path removes it only after the source binding and source
+placement are restored.
+
+The guard is defense in depth, not the source of truth for quiescence. Before
+and after the final sync VMO still enumerates Pods, checks writable mounts and
+validates attachments. Static or otherwise API-bypassing workloads remain out
+of scope and must be rejected by inventory or handled in `Manual` mode.
+
+Suggested status additions are:
+
+```yaml
+status:
+  effectiveTransport: Stunnel
+  quiesceGuard:
+    type: SchedulingGate
+    state: Pending | Active | Releasing | Released | Failed
+    policyName: vcf-volume-copy-freeze
+    bindingNames: []
+    activationVerifiedAt: null
+```
+
+RBAC gains least-privilege management of `MutatingAdmissionPolicy` and
+`MutatingAdmissionPolicyBinding` resources plus any selected parameter kind.
+Cleanup refuses to remove a `VolumeCopy` finalizer while its admission binding
+can still affect Pods.
+
+Testing additions:
+
+- unit-test PVC matching, ServiceAccount exemptions and mutation idempotency;
+- prove a replacement Pod from each supported controller receives the gate;
+- prove an unrelated PVC, namespace or migration is not affected;
+- prove activation is verified before scale-down and the guard survives an
+  operator restart, pause and final-copy failure;
+- prove a gated Pod with stale source-era state is deleted and recreated after
+  cutover rather than released in place;
+- prove cleanup removes only bindings belonging to the migration and retains
+  the shared MAP while another migration still references it; and
+- exercise both `Stunnel` and `Plain` transport, including an assertion that
+  `Plain` never creates stunnel containers or TLS credential Secrets.
+  
+### Open questions
+Other goals:
+
+- Can we do away with RWX volumes? 
+  - Should we skip syncing image registries?
+  - We should not skip them.
+  
+- What about CRs that have become invalid now?
+  - All Snapshot objects --> We will have to do it in our operator.
+    - Should we ask customer to delete them? 
+	- Should come from customer?
+  - All vSphere Driver installed CRs 
+    - CNSTopologies --> this will be probably handled by the node.
+	- CNSMigrationInfo --> I don't know if they will be automatically deleted.
+	- CNSQueryInfo  --> I don't know if they will be automatically deleted.
+  - Could application specific CRs become invalid? 	
+  
+  - 8. A resumed workload is constrained to target nodes while both vCenters are
+   configured, even if the new PV lacks useful node affinity.
+    - How do we resume workload on only target noeds while both vCenters as configured?
+	
+	- Keep everything offline until all workers from source vCenter are removed. This could 
+      be long time.
+	  - Namespace selector
+	  
+    - For zonal clusters any workload that is affected customer has to do something manual.
+
+	
+  - What happens if 3 DC in source vCenter? How does the topology looks like in target vCenter?
+    - Can we map source DC/topology to target DC/topology?
+	  - Is there a way to designate master and worker zones?
+	  - Can customer give a hint/label to the workload? 
+	  
+	- What if statefulset workload has nodeAffinity rules that does not match affinty rules of writer/rsync client
+      pod that receives the data.
+	  - One way we could we could fix this is by using data populator.
+	- With hardcoded zone/region pods will become unschedulable.
+	- How many clusters have multi-zone topology? Do we need to care about zonal clusters?
+	
+	- We could only support data move/copy using shared datastore in multi-zonal clusters.
+    	- we need to ask the customers?
+		- Ask Richard/Linh about more information about this.
+    - Or use rsync with pvc 
+	- Time 

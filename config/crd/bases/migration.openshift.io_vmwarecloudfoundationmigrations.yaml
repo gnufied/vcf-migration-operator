@@ -272,6 +272,148 @@ spec:
                 - Running
                 - Paused
                 type: string
+              storage:
+                description: |-
+                  Storage configures topology-aware CSI volume migration. When omitted, the
+                  legacy Skip behavior is retained for backwards compatibility.
+                properties:
+                  acknowledgeSourceCleanup:
+                    description: |-
+                      AcknowledgeSourceCleanup permits source-volume deletion before the
+                      rollback retention period expires.
+                    type: boolean
+                  fidelity:
+                    description: Fidelity controls filesystem metadata preservation.
+                    enum:
+                    - Restricted
+                    - Exact
+                    type: string
+                  maxConcurrentCopies:
+                    default: 2
+                    description: MaxConcurrentCopies bounds active copy attempts.
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  mode:
+                    default: Automatic
+                    description: Mode controls workload quiescing and whether storage
+                      migration is enabled.
+                    enum:
+                    - Automatic
+                    - Manual
+                    - Skip
+                    type: string
+                  preCopy:
+                    default: true
+                    description: PreCopy enables a non-authoritative online seed copy
+                      when safe.
+                    type: boolean
+                  rollbackRetention:
+                    default: 24h
+                    description: RollbackRetention keeps the retained source volume
+                      after cutover.
+                    type: string
+                  storageClassMappings:
+                    description: StorageClassMappings select target provisioning topology
+                      and cutover.
+                    items:
+                      description: StorageClassMapping maps a source StorageClass
+                        to a target failure domain.
+                      properties:
+                        cutoverStrategy:
+                          default: RebindOriginalName
+                          description: CutoverStrategy controls how consumers are
+                            switched to the copied volume.
+                          enum:
+                          - Adapter
+                          - PatchConsumer
+                          - RebindOriginalName
+                          type: string
+                        source:
+                          description: Source is the source StorageClass name.
+                          type: string
+                        target:
+                          description: Target is the target StorageClass name.
+                          type: string
+                        targetFailureDomain:
+                          description: TargetFailureDomain names an entry in spec.failureDomains.
+                          type: string
+                      required:
+                      - source
+                      - target
+                      - targetFailureDomain
+                      type: object
+                    type: array
+                  strategy:
+                    default: Auto
+                    description: Strategy selects the preferred volume migration backend.
+                    enum:
+                    - Auto
+                    - Copy
+                    - CNSRelay
+                    type: string
+                  transfer:
+                    description: Transfer configures transfer pods and transport.
+                    properties:
+                      bandwidthLimit:
+                        description: BandwidthLimit is an optional rsync bandwidth
+                          limit such as "100Mi".
+                        type: string
+                      image:
+                        description: Image is the digest-pinned rsync-transfer image.
+                        type: string
+                      schedulerName:
+                        description: SchedulerName optionally selects the scheduler
+                          used by transfer pods.
+                        type: string
+                      targetTolerations:
+                        description: TargetTolerations are applied to target receiver
+                          pods.
+                        items:
+                          description: |-
+                            The pod this Toleration is attached to tolerates any taint that matches
+                            the triple <key,value,effect> using the matching operator <operator>.
+                          properties:
+                            effect:
+                              description: |-
+                                Effect indicates the taint effect to match. Empty means match all taint effects.
+                                When specified, allowed values are NoSchedule, PreferNoSchedule and NoExecute.
+                              type: string
+                            key:
+                              description: |-
+                                Key is the taint key that the toleration applies to. Empty means match all taint keys.
+                                If the key is empty, operator must be Exists; this combination means to match all values and all keys.
+                              type: string
+                            operator:
+                              description: |-
+                                Operator represents a key's relationship to the value.
+                                Valid operators are Exists, Equal, Lt, and Gt. Defaults to Equal.
+                                Exists is equivalent to wildcard for value, so that a pod can
+                                tolerate all taints of a particular category.
+                                Lt and Gt perform numeric comparisons (requires feature gate TaintTolerationComparisonOperators).
+                              type: string
+                            tolerationSeconds:
+                              description: |-
+                                TolerationSeconds represents the period of time the toleration (which must be
+                                of effect NoExecute, otherwise this field is ignored) tolerates the taint. By default,
+                                it is not set, which means tolerate the taint forever (do not evict). Zero and
+                                negative values will be treated as 0 (evict immediately) by the system.
+                              format: int64
+                              type: integer
+                            value:
+                              description: |-
+                                Value is the taint value the toleration matches to.
+                                If the operator is Exists, the value should be empty, otherwise just a regular string.
+                              type: string
+                          type: object
+                        type: array
+                    required:
+                    - image
+                    type: object
+                required:
+                - fidelity
+                - transfer
+                type: object
               targetVCenterCredentialsSecret:
                 description: |-
                   TargetVCenterCredentialsSecret references the secret containing target vCenter credentials.
@@ -366,6 +508,42 @@ spec:
                 description: StartTime is when the migration started.
                 format: date-time
                 type: string
+              storage:
+                description: Storage contains aggregate progress; VolumeCopy resources
+                  contain details.
+                properties:
+                  active:
+                    format: int32
+                    type: integer
+                  failed:
+                    format: int32
+                    type: integer
+                  pending:
+                    format: int32
+                    type: integer
+                  succeeded:
+                    format: int32
+                    type: integer
+                  total:
+                    format: int32
+                    type: integer
+                  volumeCopies:
+                    description: VolumeCopies references the authoritative per-PVC
+                      resources.
+                    items:
+                      description: VolumeCopyReference identifies a namespaced VolumeCopy
+                        without duplicating its status.
+                      properties:
+                        name:
+                          type: string
+                        namespace:
+                          type: string
+                      required:
+                      - name
+                      - namespace
+                      type: object
+                    type: array
+                type: object
             type: object
         type: object
     served: true

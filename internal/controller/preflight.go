@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -21,6 +22,7 @@ import (
 
 	migrationv1alpha1 "github.com/openshift/vcf-migration-operator/api/v1alpha1"
 	"github.com/openshift/vcf-migration-operator/internal/openshift"
+	"github.com/openshift/vcf-migration-operator/internal/storagecopy"
 	"github.com/openshift/vcf-migration-operator/internal/vsphere"
 )
 
@@ -105,10 +107,18 @@ func (r *VmwareCloudFoundationMigrationReconciler) runPreflightChecks(ctx contex
 		return "", fmt.Errorf("cluster operators are not healthy; wait for operators to recover before starting migration: %s", strings.Join(unhealthyOperators, ", "))
 	}
 
-	if err := checkNoVSphereCSIPersistentVolumes(ctx, r.KubeClient); err != nil {
-		return "", err
+	var storageWarning string
+	if storageMigrationEnabled(migration) {
+		if err := r.checkFileCopyPreflight(ctx, migration); err != nil {
+			return "", err
+		}
+		storageWarning, err = checkVSphereStorageManagementForCopy(ctx, r.DynamicClient)
+	} else {
+		if err := checkNoVSphereCSIPersistentVolumes(ctx, r.KubeClient); err != nil {
+			return "", err
+		}
+		storageWarning, err = checkVSphereStorageManagement(ctx, r.DynamicClient)
 	}
-	storageWarning, err := checkVSphereStorageManagement(ctx, r.DynamicClient)
 	if err != nil {
 		return "", err
 	}
@@ -178,6 +188,70 @@ func (r *VmwareCloudFoundationMigrationReconciler) runPreflightChecks(ctx contex
 		message = fmt.Sprintf("%s; warning: %s", message, storageWarning)
 	}
 	return message, nil
+}
+
+var digestPinnedImage = regexp.MustCompile(`^.+@sha256:[a-fA-F0-9]{64}$`)
+
+func (r *VmwareCloudFoundationMigrationReconciler) checkFileCopyPreflight(ctx context.Context,
+	migration *migrationv1alpha1.VmwareCloudFoundationMigration) error {
+	storage := migration.Spec.Storage
+	if storage == nil {
+		return fmt.Errorf("spec.storage must be set")
+	}
+	if storage.Strategy == migrationv1alpha1.StorageMigrationStrategyCNSRelay {
+		return fmt.Errorf("CNSRelay strategy is not implemented by the file-copy mover")
+	}
+	if !digestPinnedImage.MatchString(storage.Transfer.Image) {
+		return fmt.Errorf("spec.storage.transfer.image must be pinned by sha256 digest")
+	}
+	fds := make(map[string]*configv1.VSpherePlatformFailureDomainSpec, len(migration.Spec.FailureDomains))
+	for i := range migration.Spec.FailureDomains {
+		fds[migration.Spec.FailureDomains[i].Name] = &migration.Spec.FailureDomains[i]
+	}
+	seen := map[string]bool{}
+	for i := range storage.StorageClassMappings {
+		mapping := &storage.StorageClassMappings[i]
+		if mapping.Source == "" || mapping.Target == "" || mapping.TargetFailureDomain == "" {
+			return fmt.Errorf("spec.storage.storageClassMappings[%d] requires source, target and targetFailureDomain", i)
+		}
+		if seen[mapping.Source] {
+			return fmt.Errorf("source StorageClass %q has more than one mapping", mapping.Source)
+		}
+		seen[mapping.Source] = true
+		fd := fds[mapping.TargetFailureDomain]
+		if fd == nil {
+			return fmt.Errorf("storageClassMapping for %q selects unknown failure domain %q", mapping.Source, mapping.TargetFailureDomain)
+		}
+		sc, err := r.KubeClient.StorageV1().StorageClasses().Get(ctx, mapping.Target, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("getting target StorageClass %q: %w", mapping.Target, err)
+		}
+		if err := storagecopy.ValidateTargetStorageClass(sc, fd.Region, fd.Zone); err != nil {
+			return err
+		}
+	}
+	if _, err := r.planFileCopies(ctx, migration); err != nil {
+		return fmt.Errorf("planning filesystem volume migration: %w", err)
+	}
+	return nil
+}
+
+func checkVSphereStorageManagementForCopy(ctx context.Context, dynamicClient dynamic.Interface) (string, error) {
+	csiState, err := getManagementState(ctx, dynamicClient, clusterCSIDriverGVR, vsphereCSIDriverName)
+	if err != nil {
+		return "", fmt.Errorf("reading ClusterCSIDriver/%s for storage copy: %w", vsphereCSIDriverName, err)
+	}
+	if csiState != "Managed" {
+		return "", fmt.Errorf("file-copy migration requires ClusterCSIDriver/%s managementState Managed (current: %s)", vsphereCSIDriverName, csiState)
+	}
+	storageState, err := getManagementState(ctx, dynamicClient, storageOperatorGVR, "cluster")
+	if err != nil {
+		return "unable to read Storage/cluster managementState while validating file-copy migration", nil
+	}
+	if storageState != "Managed" {
+		return fmt.Sprintf("Storage/cluster managementState is %s; keep the vSphere CSI components healthy throughout StorageMigrated", storageState), nil
+	}
+	return "", nil
 }
 
 func validateFailureDomain(ctx context.Context, fd *configv1.VSpherePlatformFailureDomainSpec, creds credentials) error {

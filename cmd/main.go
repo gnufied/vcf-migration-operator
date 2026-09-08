@@ -44,6 +44,7 @@ import (
 
 	migrationv1alpha1 "github.com/openshift/vcf-migration-operator/api/v1alpha1"
 	"github.com/openshift/vcf-migration-operator/internal/controller"
+	"github.com/openshift/vcf-migration-operator/internal/storagecopy"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -250,6 +251,17 @@ func main() {
 		Recorder:            mgr.GetEventRecorderFor("vcf-migration-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "VmwareCloudFoundationMigration")
+		os.Exit(1)
+	}
+
+	if err := (&storagecopy.VolumeCopyReconciler{
+		Client:        mgr.GetClient(),
+		Scheme:        mgr.GetScheme(),
+		KubeClient:    kubeClient,
+		MachineClient: machClient,
+		Recorder:      mgr.GetEventRecorderFor("volume-copy-controller"),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "VolumeCopy")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder

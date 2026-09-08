@@ -101,6 +101,7 @@ var conditionOrder = []string{
 	migrationv1alpha1.ConditionInfrastructurePrepared,
 	migrationv1alpha1.ConditionDestinationInitialized,
 	migrationv1alpha1.ConditionMultiSiteConfigured,
+	migrationv1alpha1.ConditionStorageMigrated,
 	migrationv1alpha1.ConditionWorkloadMigrated,
 	migrationv1alpha1.ConditionSourceCleaned,
 	migrationv1alpha1.ConditionReady,
@@ -138,8 +139,9 @@ const (
 // +kubebuilder:rbac:groups=migration.openshift.io,resources=vmwarecloudfoundationmigrations,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=migration.openshift.io,resources=vmwarecloudfoundationmigrations/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=migration.openshift.io,resources=vmwarecloudfoundationmigrations/finalizers,verbs=update
+// +kubebuilder:rbac:groups=migration.openshift.io,resources=volumecopies,verbs=get;list;watch;create
 // +kubebuilder:rbac:groups="",resources=secrets;configmaps;pods,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups="",resources=persistentvolumes,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=persistentvolumes;persistentvolumeclaims,verbs=get;list;watch;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;update;patch
@@ -152,6 +154,7 @@ const (
 // +kubebuilder:rbac:groups=machineconfiguration.openshift.io,resources=machineconfigpools,verbs=get;list;watch
 // +kubebuilder:rbac:groups=autoscaling.openshift.io,resources=clusterautoscalers;machineautoscalers,verbs=get;list;watch
 // +kubebuilder:rbac:groups=operator.openshift.io,resources=clustercsidrivers;storages,verbs=get
+// +kubebuilder:rbac:groups=storage.k8s.io,resources=storageclasses,verbs=get;list;watch
 // +kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;list;watch;create;update;patch;delete
 
 // serverDC identifies a vCenter server and datacenter pair, the unit at which
@@ -223,6 +226,7 @@ func (r *VmwareCloudFoundationMigrationReconciler) Reconcile(ctx context.Context
 		migrationv1alpha1.ConditionInfrastructurePrepared: r.ensureInfrastructurePrepared,
 		migrationv1alpha1.ConditionDestinationInitialized: r.ensureDestinationInitialized,
 		migrationv1alpha1.ConditionMultiSiteConfigured:    r.ensureMultiSiteConfigured,
+		migrationv1alpha1.ConditionStorageMigrated:        r.ensureStorageMigrated,
 		migrationv1alpha1.ConditionWorkloadMigrated:       r.ensureWorkloadMigrated,
 		migrationv1alpha1.ConditionSourceCleaned:          r.ensureSourceCleaned,
 		migrationv1alpha1.ConditionReady:                  r.ensureReady,
@@ -871,6 +875,15 @@ func (r *VmwareCloudFoundationMigrationReconciler) ensureSourceCleaned(ctx conte
 	condType := migrationv1alpha1.ConditionSourceCleaned
 
 	r.setCondition(migration, condType, metav1.ConditionFalse, migrationv1alpha1.ReasonProgressing, "Cleaning up source vCenter")
+	storageClean, storageResult, err := r.ensureStorageSourceCleanup(ctx, migration)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if !storageClean {
+		r.setCondition(migration, condType, metav1.ConditionFalse, migrationv1alpha1.ReasonProgressing,
+			"Waiting for storage rollback retention and source-volume cleanup")
+		return storageResult, nil
+	}
 
 	infraMgr := openshift.NewInfrastructureManager(r.ConfigClient)
 	infra, err := infraMgr.Get(ctx)
@@ -1202,6 +1215,9 @@ func (r *VmwareCloudFoundationMigrationReconciler) updateStatus(ctx context.Cont
 		}
 		if migration.Status.CompletionTime != nil && latest.Status.CompletionTime == nil {
 			latest.Status.CompletionTime = migration.Status.CompletionTime
+		}
+		if migration.Status.Storage != nil {
+			latest.Status.Storage = migration.Status.Storage.DeepCopy()
 		}
 		return r.Status().Update(ctx, latest)
 	})
