@@ -4,39 +4,44 @@ Status: Draft / Proposal
 
 ## 1. Scope
 
-This document defines a first implementation of filesystem-mode vSphere CSI
-volume migration between vCenters in the same OpenShift cluster. VMO provisions
-new target volumes, copies their data, switches PVC bindings, and verifies
-storage placement. Customers remain responsible for stopping, resuming, and
-validating their applications, and for applying and removing temporary
-namespace scheduling constraints at explicit checkpoints.
+VMO copies CNS volumes to new datastores in new vCenter environment using
+`pvc-transfer` as a library.
 
-The unit of coordination is a namespace. All vSphere-backed PVCs and their
-consumers in one namespace are prepared, quiesced, cut over, and validated
-together. This is intentionally coarse for the first implementation. Preflight
-must report that the temporary namespace selector also affects newly created
-Pods in that namespace that do not use migrated PVCs.
+Customer is responsible for final quescing of workloads and managing workload
+placement on new environment.
 
-Raw block migration, the staged CNS relay, and automatic modification of
-application controllers are outside the scope of this document. `VolumeCopy`
-continues to represent the resumable transfer and cutover of one PVC.
+Migration is performed on per-namespace basis with VMO doing precopy, copy,
+rebinding etc. VMO will also delete data from source datastore with customer
+confirmation.
 
-## 2. API ownership
 
-Add `Planning` to `VmwareCloudFoundationMigration.spec.state`. Planning builds
-inventory and reports blockers. It may create report CRs, but it must not create
-workers, modify vCenter or CSI configuration, label Nodes, provision target
-PVCs, start transfer Pods, or change applications.
+
+## Goals:
+
+1. VMO copies target CNS volumes using github.com/migtools/pvc-transfer as a library to new vCenter.
+
+## Non-Goals
+
+1. Quescing customer workloads.
+2. Modifying customer workload to fit new topology.
+3. Moving raw block volumes.
+
+## 2. API Changes
+
+### 1. Changes to VmwareCloudFoundationMigration type:
+
+Add `Planning` to `VmwareCloudFoundationMigration.spec.state`. When migration is in planning phase
+VMO will build inventory of volumes to migrate, create any blockers if volume can't be placed on target
+vCenter and in-general let customers know about volumes that will be migrated via custom `StorageWorkloadMigration`
+CR.
 
 The storage configuration separates StorageClass selection from failure-domain
-selection:
+selection and below is final shape of `VmwareCloudFoundationMigration` object:
 
 ```yaml
 spec:
   state: Planning
   storage:
-    mode: Manual
-    strategy: Copy
     storageClassMappings:
       - source: thin-csi
         target: thin-csi-new
@@ -56,7 +61,7 @@ CR, not separate Kubernetes objects. One target StorageClass such as
 all configured target failure domains.
 
 A customer may override the mapped target failure domain for an individual
-source PVC:
+source PVC by adding below annotation:
 
 ```yaml
 metadata:
@@ -65,23 +70,35 @@ metadata:
 ```
 
 The annotation takes precedence over `failureDomainMappings`. VMO validates
-the value against `spec.failureDomains` and records the resolved value in the
-immutable `VolumeCopy.spec.targetFailureDomain`. If source topology is missing
-or ambiguous and there is no valid override, the namespace remains blocked in
+the value against `spec.failureDomains`. During Planning, VMO records the
+resolved StorageClass and failure domain in
+`StorageWorkloadMigration.status.volumes[].targetStorageClass` and
+`targetFailureDomain`. Before target preparation starts, VMO copies those
+values into the corresponding immutable `VolumeCopy.spec.targetStorageClass`
+and `VolumeCopy.spec.targetFailureDomain`. If source topology is missing or
+ambiguous and there is no valid override, the namespace remains blocked in
 Planning.
+
+### 2. VolumeCopy object
+
+Since data migration can take long time, we track migration of each PVC via corresponding `VolumeCopy` object:
+
+```
+type VolumeCopy struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+
+	Spec   VolumeCopySpec   `json:"spec"`
+	Status VolumeCopyStatus `json:"status,omitempty"`
+}
+```
 
 ## 3. StorageWorkloadMigration
 
 During Planning, VMO creates one `StorageWorkloadMigration` in every namespace
 that contains a vSphere-backed PVC. Keeping it in the workload namespace lets
 it own the namespace's `VolumeCopy` objects; each `VolumeCopy` can in turn own
-its transfer Pods, Service, Secret, NetworkPolicy, and temporary target PVC.
-Namespace administrators can update the customer-action fields without access
-to the VMO namespace.
-
-Because the top-level migration may be in another namespace, it cannot own the
-`StorageWorkloadMigration`. The object carries the migration name and UID, is
-labeled with the migration UID, and uses an explicit finalizer for cleanup.
+its transfer Pods, temporary target PVC etc.
 
 Example:
 
@@ -104,12 +121,36 @@ status:
   namespaceUID: <namespace-uid>
   volumes: []
   consumers: []
-  volumeCopies: []
   conditions: []
 ```
 
 Customers write only `spec.actions`. VMO writes only `status`. VMO must never
 advance progress by changing the object's spec.
+
+`status.phase` uses the following ordered values:
+
+| Phase | Meaning |
+|---|---|
+| `Planning` | VMO inventories the namespace, resolves targets, and reports blockers. |
+| `PreparingTargets` | VMO creates and verifies the target PVCs, PVs, receiver Pods, and target ownership. |
+| `PreCopying` | VMO runs optional, non-authoritative seed copies. This phase may be skipped. |
+| `AwaitingQuiesce` | VMO waits for the customer to stop all consumers and approve the final copy. |
+| `FinalCopying` | VMO verifies quiescence and runs the authoritative copies. |
+| `CuttingOver` | VMO removes transfer attachments and rebinds the original PVC names to the target PVs. |
+| `AwaitingPlacementUpdate` | VMO waits for the customer to add the published target-site selector to the Namespace. |
+| `ReadyForResume` | Storage and placement are ready and VMO asks the customer to resume the workloads. |
+| `Validating` | VMO validates the resumed workloads while the customer performs application validation. |
+| `WorkloadComplete` | Storage cutover and workload validation are complete; source compute retirement may proceed. |
+| `AwaitingPlacementCleanup` | Source workers are gone and VMO waits for the customer to remove the temporary Namespace selector. |
+| `CleaningPlacement` | VMO verifies the Namespace change and removes migration labels from Nodes and MachineSets. |
+| `AwaitingSourceCleanup` | VMO waits for rollback retention and explicit source-cleanup approval. |
+| `CleaningSource` | VMO deletes retained source PVs and source-vCenter FCDs and verifies their removal. |
+| `Succeeded` | Workload migration and all required cleanup are complete. |
+| `Failed` | An unrecoverable error requires an explicit recovery action. Retriable waits remain in their current phase with conditions describing the problem. |
+
+`status.conditions` reports readiness, blockers, retries, and customer actions
+within the current phase. A Planning blocker therefore leaves `phase: Planning`
+and sets an explanatory condition; it does not change the phase to `Blocked`.
 
 Planning inventory records object identity, not names alone:
 
@@ -147,7 +188,7 @@ migration.openshift.io/site: <migration-uid>-source
 migration.openshift.io/site: <migration-uid>-target
 ```
 
-VMO also records and temporarily updates the relevant MachineSet templates so
+VMO also records and temporarily updates the relevant *MachineSet* templates so
 replacement Nodes receive the correct site label while migration is active.
 VMO continually verifies Node UID, Machine identity, vCenter, readiness, and
 topology before using a Node. A newly created, unlabeled Node remains ineligible
@@ -161,7 +202,8 @@ During Planning, VMO records the Namespace UID, whether
 `openshift.io/node-selector` exists, and its original value in
 `StorageWorkloadMigration.status`. VMO does not modify the Namespace.
 
-After storage cutover, VMO publishes the required target-site selector in
+After all associated PVCs to a namespace are copied , VMO publishes the required
+target-site selector in
 status and emits a supplemental Event asking the customer to add it to the
 Namespace:
 
@@ -204,33 +246,26 @@ source PVC target-failure-domain annotation
     -> unresolved Planning blocker
 ```
 
+if a PVC's failure-domain can not be resolved during `Planning` phase it blocks migration
+with following values in `StorageWorkloadMigration`.
+
+```
+status:
+  conditions:
+    - type: Ready
+      status: "False"
+      reason: TargetFailureDomainUnresolved
+      message: >-
+        PVC payments/data has no target failure-domain override and source
+        failure domain source-a has no mapping
+
+```
+
 StorageClass mapping only selects the target StorageClass. It does not select
 the receiver's failure domain.
 
-The complete CSI topology tuple must identify exactly one vCenter. Repeating an
-individual zone value is acceptable when the complete tuple remains unique:
-
-```text
-source: (region=old-vc, zone=zone-a)
-target: (region=new-vc, zone=zone-a)
-```
-
-Repeating both values across vCenters is ambiguous and blocks Planning:
-
-```text
-source: (region=region-1, zone=zone-a)
-target: (region=region-1, zone=zone-a)
-```
-
-VMO validates topology using both vCenter tag inventory and current
-Node -> Machine -> `workspace.server` mappings. A migration site label can
-constrain Kubernetes scheduling, but it cannot repair an ambiguous topology
-segment presented to the vSphere CSI provisioner.
-
-The source reader requires the source site label plus the resolved source
-region and zone. The target receiver requires the target site label plus the
-resolved target region and zone. These compact selectors avoid pinning a
-receiver to one hostname or listing every eligible Node.
+VMO uses both topology and `migration.openshift.io/site` selector to place
+source(rsync server) and target (rsync target) pods during migration.
 
 For example:
 
@@ -286,7 +321,9 @@ schedulable target Nodes are available in every selected target failure domain.
 
 For each PVC, VMO:
 
-1. Resolves and persists the target StorageClass and target failure domain.
+1. Revalidates the planned target StorageClass and failure domain, then persists
+   them in `VolumeCopy.spec.targetStorageClass` and
+   `VolumeCopy.spec.targetFailureDomain` for execution.
 2. Creates a temporary target PVC using the broad `WaitForFirstConsumer` target StorageClass.
 3. Creates a receiver Pod with the target site constraint and, for zonal
    clusters, the resolved target region and zone.
@@ -332,8 +369,8 @@ VMO then performs one namespace cutover:
 4. Delete the source readers and target receivers, then wait for their
    VolumeAttachments to disappear so the target filesystems are flushed and
    unmounted before changing any binding.
-5. Switch every PVC in the namespace using the selected cutover strategy. A
-   same-name rebind must preserve and verify retained source and target PV
+5. Switch every PVC in the namespace using the selected cutover strategy(In this case rebinding same PVC to new PV).
+   A same-name rebind must preserve and verify retained source and target PV
    identities before deleting any PVC.
 6. Verify every original PVC name or consumer reference resolves to the
    expected target PV and target volume handle.
@@ -364,11 +401,11 @@ VMO sets the phase to `Validating` and verifies that:
 
 The customer performs application-level validation and then sets
 `spec.actions.validationApproved: true`. VMO revalidates the observable checks
-and sets the phase to `Complete`.
+and sets the phase to `WorkloadComplete`.
 
 The operator repeats this lifecycle for each affected namespace. A blocked
 namespace does not lose its source data and prevents source cleanup. When all
-`StorageWorkloadMigration` objects are `Complete`, the top-level migration may
+`StorageWorkloadMigration` objects are `WorkloadComplete`, the top-level migration may
 continue `WorkloadMigrated` and retire source workers.
 
 ## 9. Placement cleanup
@@ -378,7 +415,7 @@ that:
 
 - source worker MachineSets cannot recreate source workers;
 - no schedulable source-vCenter worker Nodes remain;
-- all namespace migrations are `Complete`; and
+- all namespace migrations reached `WorkloadComplete`; and
 - no active rollback requires source placement,
 
 it sets each affected `StorageWorkloadMigration.status.phase` to
@@ -397,9 +434,10 @@ The customer then:
    injected migration selector.
 
 VMO verifies that the migration selector is absent and that the resulting
-selector remains compatible with target placement. VMO then removes migration
-site labels from the MachineSet templates and Nodes and records placement
-cleanup as complete. VMO never writes the Namespace selector itself.
+selector remains compatible with target placement. VMO sets the phase to
+`CleaningPlacement`, removes migration site labels from the MachineSet
+templates and Nodes, and then advances to `AwaitingSourceCleanup`. VMO never
+writes the Namespace selector itself.
 
 Future target Nodes do not need migration labels after this point. Retained
 source volumes may remain for the rollback-retention period without keeping
@@ -410,7 +448,7 @@ application scheduling constrained.
 Source-data cleanup is destructive and requires a separate customer approval.
 For each namespace, VMO waits until:
 
-- the namespace migration is `Complete`;
+- the namespace reached `AwaitingSourceCleanup`;
 - application validation succeeded;
 - the rollback-retention period expired, unless an existing explicit early
   cleanup acknowledgement applies;
@@ -418,10 +456,11 @@ For each namespace, VMO waits until:
 - the customer sets `spec.actions.sourceCleanupApproved: true`.
 
 VMO displays the source PV names, UIDs, volume handles, and vCenter ownership in
-status before accepting approval. Cleanup deletes both the retained source PV
-object and its underlying source-vCenter FCD, then verifies through a source
-CNS query that the volume no longer exists. Deleting only the PV object is not
-sufficient.
+status before accepting approval. It then sets the phase to `CleaningSource`.
+Cleanup deletes both the retained source PV object and its underlying
+source-vCenter FCD, then verifies through a source CNS query that the volume no
+longer exists. Deleting only the PV object is not sufficient. After every
+source volume for the namespace is gone, VMO sets the phase to `Succeeded`.
 
 `SourceCleaned` becomes true only after every source volume is removed and no
 transfer or placement-cleanup resources remain. Until then, the migration may
