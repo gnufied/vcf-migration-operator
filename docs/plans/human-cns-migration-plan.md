@@ -42,6 +42,8 @@ selection and below is final shape of `VmwareCloudFoundationMigration` object:
 spec:
   state: Planning
   storage:
+    # Whether to cleanup Source data
+    cleanupSourceData: <true|false>
     storageClassMappings:
       - source: thin-csi
         target: thin-csi-new
@@ -380,10 +382,6 @@ VMO then performs one namespace cutover:
 8. Observe and validate the customer-applied Namespace selector.
 9. Set `StorageWorkloadMigration.status.phase` to `ReadyForResume`.
 
-`DataCopied` is not a resume boundary. Resume is allowed only after data copy,
-PVC cutover, binding verification, transfer cleanup, and target placement are
-all complete.
-
 ## 8. Resume and validation
 
 At `ReadyForResume`, VMO emits a supplemental Event asking the customer to
@@ -410,8 +408,9 @@ continue `WorkloadMigrated` and retire source workers.
 
 ## 9. Placement cleanup
 
-Placement cleanup is separate from source-data deletion. After VMO verifies
-that:
+At placement cleanup we should remove the namespace selectors which were 
+previously used to schedule customer's workloads on target vCenter. We need to 
+remove them because otherwise pod scheduling will forever depend on them. 
 
 - source worker MachineSets cannot recreate source workers;
 - no schedulable source-vCenter worker Nodes remain;
@@ -444,6 +443,13 @@ source volumes may remain for the rollback-retention period without keeping
 application scheduling constrained.
 
 ## 10. Source-data cleanup
+
+If customer has opted to cleanup the source via `cleanupSourceData` via 
+`VmwareCloudFoundationMigration` object then VMO will optionally cleanup
+the data from source datastore.
+
+If customer has not opted in to cleanup source data, each `StorageWorkloadMigration`
+is set to `Succeeded` and storage part of migration is considered complete.
 
 Source-data cleanup is destructive and requires a separate customer approval.
 For each namespace, VMO waits until:
