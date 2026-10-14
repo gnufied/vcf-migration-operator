@@ -40,6 +40,29 @@ metadata:
               "namespace": "openshift-vcf-migration"
             }
           }
+        },
+        {
+          "apiVersion": "migration.openshift.io/v1alpha1",
+          "kind": "StorageWorkloadMigration",
+          "metadata": {
+            "labels": {
+              "app.kubernetes.io/managed-by": "kustomize",
+              "app.kubernetes.io/name": "vcf-migration-operator"
+            },
+            "name": "vcf-storage-example",
+            "namespace": "payments"
+          },
+          "spec": {
+            "actions": {
+              "finalCopyApproved": false,
+              "sourceCleanupApproved": false,
+              "validationApproved": false
+            },
+            "migrationRef": {
+              "name": "cluster",
+              "uid": "00000000-0000-0000-0000-000000000001"
+            }
+          }
         }
       ]
     capabilities: Basic Install
@@ -61,6 +84,11 @@ spec:
   apiservicedefinitions: {}
   customresourcedefinitions:
     owned:
+    - description: StorageWorkloadMigration tracks customer-coordinated storage migration in one namespace.
+      displayName: Storage Workload Migration
+      kind: StorageWorkloadMigration
+      name: storageworkloadmigrations.migration.openshift.io
+      version: v1alpha1
     - description: |-
         VmwareCloudFoundationMigration is the Schema for the vmwarecloudfoundationmigrations API.
         It orchestrates migration of an OpenShift cluster from one vCenter to another.

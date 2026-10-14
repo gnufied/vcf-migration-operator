@@ -8,19 +8,16 @@
 
 ## Spec
 
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `state` | `MigrationState` | No | `Pending` | `Pending`, `Running`, or `Paused`. Reconciler only acts when `Running`. |
-| `targetVCenterCredentialsSecret` | `SecretReference` | Yes | | Secret with target vCenter credentials. |
-| `failureDomains` | `[]VSpherePlatformFailureDomainSpec` | Yes (min 1) | | Target failure domains. Uses the OpenShift `configv1` type. |
+- `state` (`MigrationState`, optional, default `Pending`): accepts `Pending`, `Planning`, `Running`, or `Paused`. The migration workflow only executes when `Running`.
+- `targetVCenterCredentialsSecret` (`SecretReference`, required): Secret with target vCenter credentials.
+- `failureDomains` (`[]VSpherePlatformFailureDomainSpec`, required, minimum one): target failure domains, using the OpenShift `configv1` type.
 
 ### MigrationState Enum
 
-| Value | Meaning |
-|-------|---------|
-| `Pending` | Migration has not started |
-| `Running` | Migration is actively progressing |
-| `Paused` | Migration is paused by the user |
+- `Pending`: migration has not started.
+- `Planning`: the cluster administrator has requested migration planning. The API accepts this value; planning execution is not yet implemented, so the reconciler skips migration work in this state.
+- `Running`: migration is actively progressing.
+- `Paused`: migration is paused by the user.
 
 ### SecretReference
 

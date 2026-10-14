@@ -279,14 +279,69 @@ spec:
               state:
                 default: Pending
                 description: |-
-                  state controls the workflow: Pending, Running, Paused.
+                  state controls the workflow: Pending, Planning, Running, Paused.
                   The migration workflow only executes when state is Running.
                   When omitted, defaults to Pending.
                 enum:
                 - Pending
+                - Planning
                 - Running
                 - Paused
                 type: string
+              storage:
+                description: |-
+                  storage configures CNS volume data migration. When omitted, storage
+                  migration is not configured.
+                properties:
+                  cleanupSourceData:
+                    default: false
+                    description: |-
+                      CleanupSourceData defines whether source volumes should be removed or not.
+                      It can only be set to true for the Rsync DataMigrationStrategy.
+                    type: boolean
+                  dataMigrationStrategy:
+                    default: Auto
+                    description: |-
+                      DataMigrationStrategy defines how VMO will move the data.
+                      When omitted, defaults to Auto. CnsNative is not currently supported.
+                    enum:
+                    - Auto
+                    - Rsync
+                    type: string
+                  failureDomainMap:
+                    description: |-
+                      FailureDomainMap maps source vCenter failure domains to target vCenter failure domains.
+                      Each source failure domain may appear only once.
+                    items:
+                      description: FailureDomainMap maps a source failure domain to
+                        a target failure domain.
+                      properties:
+                        source:
+                          description: Source is the source vCenter failure domain
+                            name.
+                          maxLength: 256
+                          minLength: 1
+                          type: string
+                        target:
+                          description: Target is the target vCenter failure domain
+                            name.
+                          maxLength: 256
+                          minLength: 1
+                          type: string
+                      required:
+                      - source
+                      - target
+                      type: object
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - source
+                    x-kubernetes-list-type: map
+                type: object
+                x-kubernetes-validations:
+                - message: cleanupSourceData can only be enabled with the Rsync dataMigrationStrategy
+                  rule: '!has(self.cleanupSourceData) || !self.cleanupSourceData ||
+                    (has(self.dataMigrationStrategy) && self.dataMigrationStrategy
+                    == ''Rsync'')'
               targetVCenterCredentialsSecret:
                 description: |-
                   targetVCenterCredentialsSecret references the secret containing target vCenter credentials.

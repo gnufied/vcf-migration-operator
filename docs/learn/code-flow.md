@@ -19,7 +19,7 @@ flowchart TD
 
 [cmd/main.go](../../cmd/main.go) creates the controller-runtime manager and Kubernetes/OpenShift clients, then registers the reconciler.
 
-The [migration API](../../api/v1alpha1/vmwarecloudfoundationmigration_types.go) supplies destination credentials, failure domains—including topology and VM templates—and a `Pending`, `Running`, or `Paused` state. Only resources named `cluster` are processed, and migration work runs only when `spec.state` is `Running`.
+The [migration API](../../api/v1alpha1/vmwarecloudfoundationmigration_types.go) supplies destination credentials, failure domains—including topology and VM templates—and a `Pending`, `Planning`, `Running`, or `Paused` state. Only resources named `cluster` are processed, and migration work runs only when `spec.state` is `Running`. `Planning` is accepted by the API; planning execution is not yet implemented.
 
 ## Reconciliation engine
 

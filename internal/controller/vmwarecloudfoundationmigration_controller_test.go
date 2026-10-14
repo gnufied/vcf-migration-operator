@@ -109,6 +109,21 @@ var _ = Describe("required failure-domain template admission", func() {
 		}
 		Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 		DeferCleanup(func() { Expect(k8sClient.Delete(ctx, resource)).To(Succeed()) })
+		Expect(resource.Spec.State).To(Equal(migrationv1alpha1.MigrationStatePending))
+
+		By("accepting Planning on update and create")
+		resource.Spec.State = migrationv1alpha1.MigrationStatePlanning
+		Expect(k8sClient.Update(ctx, resource)).To(Succeed())
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resource.Name, Namespace: resource.Namespace}, resource)).To(Succeed())
+		Expect(resource.Spec.State).To(Equal(migrationv1alpha1.MigrationStatePlanning))
+
+		planned := resource.DeepCopy()
+		planned.Name = ""
+		planned.ResourceVersion = ""
+		planned.UID = ""
+		Expect(k8sClient.Create(ctx, planned)).To(Succeed())
+		DeferCleanup(func() { Expect(k8sClient.Delete(ctx, planned)).To(Succeed()) })
+		Expect(planned.Spec.State).To(Equal(migrationv1alpha1.MigrationStatePlanning))
 	})
 })
 

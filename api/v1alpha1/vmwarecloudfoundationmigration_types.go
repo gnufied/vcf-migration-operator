@@ -27,6 +27,10 @@ type MigrationState string
 const (
 	// MigrationStatePending indicates the migration has not started.
 	MigrationStatePending MigrationState = "Pending"
+
+	// MigrationStatePlanning indicates the cluster administrator has requested migration planning.
+	MigrationStatePlanning MigrationState = "Planning"
+
 	// MigrationStateRunning indicates the migration is actively progressing.
 	MigrationStateRunning MigrationState = "Running"
 	// MigrationStatePaused indicates the migration is paused by the user.
@@ -97,11 +101,11 @@ type SecretReference struct {
 
 // VmwareCloudFoundationMigrationSpec defines the desired state of VmwareCloudFoundationMigration.
 type VmwareCloudFoundationMigrationSpec struct {
-	// state controls the workflow: Pending, Running, Paused.
+	// state controls the workflow: Pending, Planning, Running, Paused.
 	// The migration workflow only executes when state is Running.
 	// When omitted, defaults to Pending.
 	// +optional
-	// +kubebuilder:validation:Enum=Pending;Running;Paused
+	// +kubebuilder:validation:Enum=Pending;Planning;Running;Paused
 	// +kubebuilder:default=Pending
 	State MigrationState `json:"state,omitempty"`
 
@@ -120,6 +124,11 @@ type VmwareCloudFoundationMigrationSpec struct {
 	// +kubebuilder:validation:XValidation:rule="self.all(fd, has(fd.topology.template) && fd.topology.template != '')",message="topology.template is required for every failure domain"
 	// +listType=atomic
 	FailureDomains []configv1.VSpherePlatformFailureDomainSpec `json:"failureDomains"`
+
+	// storage configures CNS volume data migration. When omitted, storage
+	// migration is not configured.
+	// +optional
+	Storage *StorageMigrationSpec `json:"storage,omitempty"`
 }
 
 // VmwareCloudFoundationMigrationStatus defines the observed state of VmwareCloudFoundationMigration.
@@ -156,6 +165,60 @@ type VmwareCloudFoundationMigrationStatus struct {
 	// completionTime is when the migration completed.
 	// +optional
 	CompletionTime *metav1.Time `json:"completionTime,omitempty"`
+}
+
+// VolumeDataMigrationStrategy selects how CNS volume data is migrated.
+// CnsNative is reserved for future support and cannot currently be selected.
+// +kubebuilder:validation:Enum=Auto;Rsync
+type VolumeDataMigrationStrategy string
+
+const (
+	// VolumeDataMigrationStrategyAuto lets VMO choose the migration strategy.
+	VolumeDataMigrationStrategyAuto VolumeDataMigrationStrategy = "Auto"
+
+	// VolumeDataMigrationStrategyRsync copies volume data with rsync.
+	VolumeDataMigrationStrategyRsync VolumeDataMigrationStrategy = "Rsync"
+
+	// VolumeDataMigrationStrategyCnsNative reserves CNS native migration, which is currently unsupported.
+	VolumeDataMigrationStrategyCnsNative VolumeDataMigrationStrategy = "CnsNative"
+)
+
+// StorageMigrationSpec configures storage for CNS volume migration.
+// +kubebuilder:validation:XValidation:rule="!has(self.cleanupSourceData) || !self.cleanupSourceData || (has(self.dataMigrationStrategy) && self.dataMigrationStrategy == 'Rsync')",message="cleanupSourceData can only be enabled with the Rsync dataMigrationStrategy"
+type StorageMigrationSpec struct {
+	// CleanupSourceData defines whether source volumes should be removed or not.
+	// It can only be set to true for the Rsync DataMigrationStrategy.
+	// +optional
+	// +kubebuilder:default=false
+	CleanupSourceData bool `json:"cleanupSourceData,omitempty"`
+
+	// DataMigrationStrategy defines how VMO will move the data.
+	// When omitted, defaults to Auto. CnsNative is not currently supported.
+	// +optional
+	// +kubebuilder:default=Auto
+	DataMigrationStrategy VolumeDataMigrationStrategy `json:"dataMigrationStrategy,omitempty"`
+
+	// FailureDomainMap maps source vCenter failure domains to target vCenter failure domains.
+	// Each source failure domain may appear only once.
+	// +optional
+	// +listType=map
+	// +listMapKey=source
+	FailureDomainMap []FailureDomainMap `json:"failureDomainMap,omitempty"`
+}
+
+// FailureDomainMap maps a source failure domain to a target failure domain.
+type FailureDomainMap struct {
+	// Source is the source vCenter failure domain name.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=256
+	Source string `json:"source"`
+
+	// Target is the target vCenter failure domain name.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=256
+	Target string `json:"target"`
 }
 
 // Condition type constants for the migration workflow.
