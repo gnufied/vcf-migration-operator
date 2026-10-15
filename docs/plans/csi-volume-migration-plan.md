@@ -251,8 +251,11 @@ VMO resolves a target failure domain for every PVC using this precedence:
 ```
 source PVC target-failure-domain annotation
     -> failureDomainMappings[source PV failure domain]
+    -> the only target failure domain, if spec.failureDomains has exactly one
     -> unresolved Planning blocker
 ```
+
+A mapping is therefore only required when the target has more than one failure domain.
 
 if a PVC's failure-domain can not be resolved during `Planning` phase it blocks migration with following values in `StorageWorkloadMigration`.
 

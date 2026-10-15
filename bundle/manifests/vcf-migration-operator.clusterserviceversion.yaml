@@ -6,6 +6,29 @@ metadata:
       [
         {
           "apiVersion": "migration.openshift.io/v1alpha1",
+          "kind": "StorageWorkloadMigration",
+          "metadata": {
+            "labels": {
+              "app.kubernetes.io/managed-by": "kustomize",
+              "app.kubernetes.io/name": "vcf-migration-operator"
+            },
+            "name": "vcf-storage-example",
+            "namespace": "payments"
+          },
+          "spec": {
+            "actions": {
+              "finalCopyApproved": false,
+              "sourceCleanupApproved": false,
+              "validationApproved": false
+            },
+            "migrationRef": {
+              "name": "cluster",
+              "uid": "00000000-0000-0000-0000-000000000001"
+            }
+          }
+        },
+        {
+          "apiVersion": "migration.openshift.io/v1alpha1",
           "kind": "VmwareCloudFoundationMigration",
           "metadata": {
             "labels": {
@@ -40,33 +63,10 @@ metadata:
               "namespace": "openshift-vcf-migration"
             }
           }
-        },
-        {
-          "apiVersion": "migration.openshift.io/v1alpha1",
-          "kind": "StorageWorkloadMigration",
-          "metadata": {
-            "labels": {
-              "app.kubernetes.io/managed-by": "kustomize",
-              "app.kubernetes.io/name": "vcf-migration-operator"
-            },
-            "name": "vcf-storage-example",
-            "namespace": "payments"
-          },
-          "spec": {
-            "actions": {
-              "finalCopyApproved": false,
-              "sourceCleanupApproved": false,
-              "validationApproved": false
-            },
-            "migrationRef": {
-              "name": "cluster",
-              "uid": "00000000-0000-0000-0000-000000000001"
-            }
-          }
         }
       ]
     capabilities: Basic Install
-    createdAt: "2026-10-08T13:06:44Z"
+    createdAt: "2026-10-15T20:16:25Z"
     features.operators.openshift.io/disconnected: "true"
     features.operators.openshift.io/fips-compliant: "false"
     features.operators.openshift.io/proxy-aware: "false"
@@ -84,7 +84,8 @@ spec:
   apiservicedefinitions: {}
   customresourcedefinitions:
     owned:
-    - description: StorageWorkloadMigration tracks customer-coordinated storage migration in one namespace.
+    - description: StorageWorkloadMigration tracks customer-coordinated storage migration
+        in one namespace.
       displayName: Storage Workload Migration
       kind: StorageWorkloadMigration
       name: storageworkloadmigrations.migration.openshift.io
@@ -95,6 +96,14 @@ spec:
       displayName: Vmware Cloud Foundation Migration
       kind: VmwareCloudFoundationMigration
       name: vmwarecloudfoundationmigrations.migration.openshift.io
+      version: v1alpha1
+    - description: |-
+        VolumeCopy tracks the migration of one source PVC's data to a target-vCenter volume.
+        It lives in the source PVC's namespace and is owned by that namespace's
+        StorageWorkloadMigration.
+      displayName: Volume Copy
+      kind: VolumeCopy
+      name: volumecopies.migration.openshift.io
       version: v1alpha1
   description: Migrate OCP from source to destination VCF workload
   displayName: VCF Migration Operator
@@ -269,6 +278,62 @@ spec:
           - subjectaccessreviews
           verbs:
           - create
+        - apiGroups:
+          - ""
+          resources:
+          - namespaces
+          verbs:
+          - get
+          - list
+        - apiGroups:
+          - ""
+          resources:
+          - persistentvolumeclaims
+          verbs:
+          - get
+          - list
+          - watch
+        - apiGroups:
+          - apps
+          resources:
+          - daemonsets
+          - replicasets
+          - statefulsets
+          verbs:
+          - get
+        - apiGroups:
+          - batch
+          resources:
+          - cronjobs
+          - jobs
+          verbs:
+          - get
+        - apiGroups:
+          - migration.openshift.io
+          resources:
+          - storageworkloadmigrations
+          verbs:
+          - create
+          - delete
+          - get
+          - list
+          - update
+          - watch
+        - apiGroups:
+          - migration.openshift.io
+          resources:
+          - storageworkloadmigrations/status
+          verbs:
+          - get
+          - patch
+          - update
+        - apiGroups:
+          - storage.k8s.io
+          resources:
+          - storageclasses
+          verbs:
+          - get
+          - list
         serviceAccountName: vcf-migration-operator-controller-manager
       deployments:
       - label:

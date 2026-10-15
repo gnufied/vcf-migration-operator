@@ -30,6 +30,7 @@ func TestStorageWorkloadMigrationDeepCopy(t *testing.T) {
 				Phase: StorageWorkloadMigrationPhasePlanning,
 				Volumes: []StorageWorkloadMigrationVolume{{
 					SourcePVC: MigrationObjectReference{Name: "data", UID: "pvc-uid"},
+					Blockers:  []StorageWorkloadMigrationBlocker{{Reason: "RawBlockUnsupported", Message: "original"}},
 					SourcePV: StorageWorkloadMigrationSourcePV{
 						Name: "pv", UID: "pv-uid", VolumeHandle: "source-volume",
 					},
@@ -42,13 +43,14 @@ func TestStorageWorkloadMigrationDeepCopy(t *testing.T) {
 		}},
 	}
 	copied := orig.DeepCopyObject().(*StorageWorkloadMigrationList)
+	copied.Items[0].Status.Volumes[0].Blockers[0].Message = "changed"
 	copied.Items[0].Labels["site"] = "target"
 	copied.Items[0].Spec.Actions.FinalCopyApproved = true
 	copied.Items[0].Status.Volumes[0].SourcePV.VolumeHandle = "target-volume"
 	copied.Items[0].Status.Consumers[0].UID = "replacement-uid"
 	copied.Items[0].Status.Conditions[0].Message = "changed"
 	got := orig.Items[0]
-	if got.Labels["site"] != "source" || got.Spec.Actions.FinalCopyApproved ||
+	if got.Status.Volumes[0].Blockers[0].Message != "original" || got.Labels["site"] != "source" || got.Spec.Actions.FinalCopyApproved ||
 		got.Status.Volumes[0].SourcePV.VolumeHandle != "source-volume" ||
 		got.Status.Consumers[0].UID != "consumer-uid" || got.Status.Conditions[0].Message != "planning" {
 		t.Fatalf("DeepCopyObject: mutating the copy changed the original: %+v", got)

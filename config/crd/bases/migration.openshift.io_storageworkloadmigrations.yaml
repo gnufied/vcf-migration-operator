@@ -229,6 +229,30 @@ spec:
                   description: StorageWorkloadMigrationVolume records a source volume
                     and its planned destination.
                   properties:
+                    blockers:
+                      description: Blockers lists reasons this volume cannot be migrated.
+                      items:
+                        description: StorageWorkloadMigrationBlocker explains why
+                          a volume cannot be migrated.
+                        properties:
+                          message:
+                            description: Message explains the blocker and how to resolve
+                              it.
+                            maxLength: 1024
+                            type: string
+                          reason:
+                            description: Reason is a CamelCase blocker identifier.
+                            maxLength: 64
+                            minLength: 1
+                            type: string
+                        required:
+                        - message
+                        - reason
+                        type: object
+                      type: array
+                      x-kubernetes-list-map-keys:
+                      - reason
+                      x-kubernetes-list-type: map
                     sourcePV:
                       description: SourcePV identifies the bound source PV and CSI
                         volume.

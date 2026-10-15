@@ -40,6 +40,8 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 		&VmwareCloudFoundationMigrationList{},
 		&StorageWorkloadMigration{},
 		&StorageWorkloadMigrationList{},
+		&VolumeCopy{},
+		&VolumeCopyList{},
 	)
 	metav1.AddToGroupVersion(scheme, GroupVersion)
 	return nil

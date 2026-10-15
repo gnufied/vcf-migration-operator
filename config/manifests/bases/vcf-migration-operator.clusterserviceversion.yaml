@@ -19,7 +19,8 @@ spec:
   apiservicedefinitions: {}
   customresourcedefinitions:
     owned:
-    - description: StorageWorkloadMigration tracks customer-coordinated storage migration in one namespace.
+    - description: StorageWorkloadMigration tracks customer-coordinated storage migration
+        in one namespace.
       displayName: Storage Workload Migration
       kind: StorageWorkloadMigration
       name: storageworkloadmigrations.migration.openshift.io
@@ -30,6 +31,14 @@ spec:
       displayName: Vmware Cloud Foundation Migration
       kind: VmwareCloudFoundationMigration
       name: vmwarecloudfoundationmigrations.migration.openshift.io
+      version: v1alpha1
+    - description: |-
+        VolumeCopy tracks the migration of one source PVC's data to a target-vCenter volume.
+        It lives in the source PVC's namespace and is owned by that namespace's
+        StorageWorkloadMigration.
+      displayName: Volume Copy
+      kind: VolumeCopy
+      name: volumecopies.migration.openshift.io
       version: v1alpha1
   description: Migrate OCP from source to destination VCF workload
   displayName: VCF Migration Operator

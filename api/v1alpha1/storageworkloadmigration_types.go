@@ -142,6 +142,22 @@ type StorageWorkloadMigrationSourcePV struct {
 	VolumeHandle string `json:"volumeHandle"`
 }
 
+// StorageWorkloadMigrationConditionPlanned reports whether the inventory has blockers.
+const StorageWorkloadMigrationConditionPlanned = "Planned"
+
+// StorageWorkloadMigrationBlocker explains why a volume cannot be migrated.
+type StorageWorkloadMigrationBlocker struct {
+	// Reason is a CamelCase blocker identifier.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=64
+	Reason string `json:"reason"`
+	// Message explains the blocker and how to resolve it.
+	// +required
+	// +kubebuilder:validation:MaxLength=1024
+	Message string `json:"message"`
+}
+
 // StorageWorkloadMigrationVolume records a source volume and its planned destination.
 type StorageWorkloadMigrationVolume struct {
 	// SourcePVC identifies the source PVC in this workload namespace.
@@ -157,6 +173,12 @@ type StorageWorkloadMigrationVolume struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=256
 	TargetFailureDomain string `json:"targetFailureDomain,omitempty"`
+
+	// Blockers lists reasons this volume cannot be migrated.
+	// +optional
+	// +listType=map
+	// +listMapKey=reason
+	Blockers []StorageWorkloadMigrationBlocker `json:"blockers,omitempty"`
 }
 
 // StorageWorkloadMigrationConsumer records a workload controller observed consuming

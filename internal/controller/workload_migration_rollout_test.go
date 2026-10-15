@@ -496,6 +496,7 @@ func TestReconcileWorkloadMigratedFailedWorkerMachine(t *testing.T) {
 	// ensureWorkloadMigrated.
 	completedMessage := "completed"
 	reconciler.setCondition(migration, migrationv1alpha1.ConditionInfrastructurePrepared, metav1.ConditionTrue, migrationv1alpha1.ReasonCompleted, completedMessage)
+	reconciler.setCondition(migration, migrationv1alpha1.ConditionStoragePlanned, metav1.ConditionTrue, migrationv1alpha1.ReasonNotConfigured, completedMessage)
 	reconciler.setCondition(migration, migrationv1alpha1.ConditionDestinationInitialized, metav1.ConditionTrue, migrationv1alpha1.ReasonCompleted, completedMessage)
 	reconciler.setCondition(migration, migrationv1alpha1.ConditionMultiSiteConfigured, metav1.ConditionTrue, migrationv1alpha1.ReasonCompleted, completedMessage)
 

@@ -280,7 +280,7 @@ spec:
                 default: Pending
                 description: |-
                   state controls the workflow: Pending, Planning, Running, Paused.
-                  The migration workflow only executes when state is Running.
+                  Planning runs non-disruptive checks; Running proceeds when the plan has no blockers.
                   When omitted, defaults to Pending.
                 enum:
                 - Pending
@@ -378,6 +378,7 @@ spec:
                   - Accepted: admission gate; True is normal for the single reconciled instance (cluster),
                     while False indicates an unsupported object name.
                   - InfrastructurePrepared: preflight validation and migration path selection.
+                  - StoragePlanned: storage inventory and target resolution have no blockers.
                   - DestinationInitialized: destination vCenter folders and tags created.
                   - MultiSiteConfigured: cluster configured for both source and target vCenters.
                   - WorkloadMigrated: workloads migrated to destination vCenter machine sets.
@@ -498,7 +499,8 @@ spec:
                     type: object
                 type: object
               startTime:
-                description: startTime is when the migration started.
+                description: startTime is persisted before the first disruptive migration
+                  step.
                 format: date-time
                 type: string
             type: object

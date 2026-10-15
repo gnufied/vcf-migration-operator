@@ -1,0 +1,137 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: volumecopies.migration.openshift.io
+spec:
+  group: migration.openshift.io
+  names:
+    kind: VolumeCopy
+    listKind: VolumeCopyList
+    plural: volumecopies
+    shortNames:
+    - vcopy
+    singular: volumecopy
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .spec.sourcePVC.name
+      name: Source PVC
+      type: string
+    - jsonPath: .spec.targetFailureDomain
+      name: Target FD
+      type: string
+    - jsonPath: .spec.dataMigrationStrategy
+      name: Strategy
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          VolumeCopy tracks the migration of one source PVC's data to a target-vCenter volume.
+          It lives in the source PVC's namespace and is owned by that namespace's
+          StorageWorkloadMigration.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: VolumeCopySpec identifies the source PVC whose data is migrated.
+            properties:
+              dataMigrationStrategy:
+                description: |-
+                  DataMigrationStrategy is the strategy VMO resolved for this PVC during Planning.
+                  It is never Auto, and it is immutable so an in-flight copy never switches mechanism.
+                enum:
+                - Auto
+                - Rsync
+                type: string
+                x-kubernetes-validations:
+                - message: dataMigrationStrategy must be a resolved strategy, not
+                    Auto
+                  rule: self != 'Auto'
+                - message: dataMigrationStrategy is immutable
+                  rule: self == oldSelf
+              sourcePVC:
+                description: SourcePVC identifies the source PVC in this namespace.
+                properties:
+                  name:
+                    description: Name is the object name.
+                    maxLength: 253
+                    minLength: 1
+                    type: string
+                  uid:
+                    description: UID is the identity of the object; same-name replacements
+                      must not be adopted.
+                    maxLength: 128
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                - uid
+                type: object
+                x-kubernetes-validations:
+                - message: sourcePVC is immutable
+                  rule: self == oldSelf
+              targetFailureDomain:
+                description: |-
+                  TargetFailureDomain is the resolved target failure domain, naming an entry in the
+                  VmwareCloudFoundationMigration's spec.failureDomains.
+                maxLength: 256
+                minLength: 1
+                type: string
+                x-kubernetes-validations:
+                - message: targetFailureDomain is immutable
+                  rule: self == oldSelf
+            required:
+            - dataMigrationStrategy
+            - sourcePVC
+            - targetFailureDomain
+            type: object
+          status:
+            description: VolumeCopyStatus contains operator-owned progress for one
+              volume.
+            properties:
+              phase:
+                description: Phase identifies the current phase of the volume migration.
+                enum:
+                - Planned
+                - TargetPrepared
+                - PreCopying
+                - PreCopied
+                - FinalCopying
+                - Copied
+                - CuttingOver
+                - Succeeded
+                - Failed
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

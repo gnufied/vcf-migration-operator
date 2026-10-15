@@ -102,7 +102,7 @@ type SecretReference struct {
 // VmwareCloudFoundationMigrationSpec defines the desired state of VmwareCloudFoundationMigration.
 type VmwareCloudFoundationMigrationSpec struct {
 	// state controls the workflow: Pending, Planning, Running, Paused.
-	// The migration workflow only executes when state is Running.
+	// Planning runs non-disruptive checks; Running proceeds when the plan has no blockers.
 	// When omitted, defaults to Pending.
 	// +optional
 	// +kubebuilder:validation:Enum=Pending;Planning;Running;Paused
@@ -142,6 +142,7 @@ type VmwareCloudFoundationMigrationStatus struct {
 	// - Accepted: admission gate; True is normal for the single reconciled instance (cluster),
 	//   while False indicates an unsupported object name.
 	// - InfrastructurePrepared: preflight validation and migration path selection.
+	// - StoragePlanned: storage inventory and target resolution have no blockers.
 	// - DestinationInitialized: destination vCenter folders and tags created.
 	// - MultiSiteConfigured: cluster configured for both source and target vCenters.
 	// - WorkloadMigrated: workloads migrated to destination vCenter machine sets.
@@ -154,7 +155,7 @@ type VmwareCloudFoundationMigrationStatus struct {
 	// +listMapKey=type
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
-	// startTime is when the migration started.
+	// startTime is persisted before the first disruptive migration step.
 	// +optional
 	StartTime *metav1.Time `json:"startTime,omitempty"`
 
@@ -229,6 +230,9 @@ const (
 	// migration path has been selected.
 	ConditionInfrastructurePrepared = "InfrastructurePrepared"
 
+	// ConditionStoragePlanned indicates storage inventory has no migration blockers.
+	ConditionStoragePlanned = "StoragePlanned"
+
 	// ConditionDestinationInitialized indicates the target vCenter has all required assets
 	// (VM folders, region/zone tags).
 	ConditionDestinationInitialized = "DestinationInitialized"
@@ -257,9 +261,19 @@ const (
 
 // Condition reason constants.
 const (
-	ReasonProgressing = "Progressing"
-	ReasonCompleted   = "Completed"
-	ReasonFailed      = "Failed"
+	// ReasonPlanning indicates non-disruptive checks are running.
+	ReasonPlanning = "Planning"
+	// ReasonPlanComplete indicates the plan is ready for customer review.
+	ReasonPlanComplete = "PlanComplete"
+	// ReasonPlanBlocked indicates storage blockers prevent migration.
+	ReasonPlanBlocked = "PlanBlocked"
+	// ReasonPlanningAfterStart indicates planning cannot restart a migration.
+	ReasonPlanningAfterStart = "PlanningAfterStart"
+	// ReasonNotConfigured indicates storage migration was not requested.
+	ReasonNotConfigured = "NotConfigured"
+	ReasonProgressing   = "Progressing"
+	ReasonCompleted     = "Completed"
+	ReasonFailed        = "Failed"
 	// ReasonPaused indicates migration has been paused because spec.state is set to Paused.
 	ReasonPaused = "Paused"
 
